@@ -1,0 +1,10 @@
+{
+  "windowWidth": 320,
+  "windowHeight": 458,
+  "animationTickMs": 30,
+  "volumePollMs": 400,
+  "brightnessPollMs": 1200,
+  "codexPollMs": 1600,
+  "triggerOnCodexOpen": true,
+  "alwaysOnTop": true
+}
