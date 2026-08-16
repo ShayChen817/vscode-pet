@@ -1,6 +1,6 @@
-# CR7 Codex Pet
+# VS Code Pet
 
-A polished animated Windows desktop pet with five Ronaldo-inspired fan-art skins, 25 real animation frames per skin, WPF per-pixel transparency, and system-aware celebrations.
+A polished animated Windows companion for VS Code with five Ronaldo-inspired fan-art skins, 25 real animation frames per skin, WPF per-pixel transparency, and system-aware celebrations.
 
 ## Start
 
