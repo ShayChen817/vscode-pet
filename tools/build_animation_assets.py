@@ -65,14 +65,16 @@ INNER_BACKGROUND_SEEDS = {
     24: ((133, 183),),  # shirt_05_recover: inside the bent arm
 }
 
-# In the second shirt-removal pose the generator left a bright neutral matte
-# across the lifted V-shaped fabric on the two coloured kits. Blend that matte
-# back into the jersey; do not touch sleeve trim or any genuinely white kit.
-LIFTED_SHIRT_MATTE_COLORS = {
-    "purple-noodle": (90, 20, 160),
-    "young-ronaldo": (195, 4, 2),
+# White kit panels can touch the neutral checker colour in this pose, so use
+# known pixels from each skin's four enclosed pockets instead of one generic
+# seed set. This preserves the shirt, collar, number, teeth, socks, and shoes.
+SHIRT_GRAB_BACKGROUND_SEEDS = {
+    "purple-noodle": ((114, 191), (126, 195), (191, 181), (183, 197)),
+    "young-ronaldo": ((117, 194), (127, 202), (195, 184), (185, 201)),
+    "juventus-half": ((109, 193), (126, 201), (198, 178), (190, 199)),
+    "portugal-euro": ((105, 191), (126, 199), (205, 180), (185, 202)),
+    "white-gold": ((112, 190), (126, 194), (197, 183), (189, 196)),
 }
-
 
 def connected_background(rgb: np.ndarray) -> np.ndarray:
     """Find the generated near-white checkerboard connected to image borders."""
@@ -136,10 +138,15 @@ def make_real_alpha(source: Image.Image) -> Image.Image:
     return Image.fromarray(pixels, mode="RGBA")
 
 
-def clear_inner_background(frame: Image.Image, frame_index: int) -> Image.Image:
+def clear_inner_background(
+    frame: Image.Image, frame_index: int, skin_slug: str
+) -> Image.Image:
     """Remove seeded enclosed checkerboard pockets without touching white kits."""
 
-    seeds = INNER_BACKGROUND_SEEDS.get(frame_index)
+    if frame_index == 20:
+        seeds = SHIRT_GRAB_BACKGROUND_SEEDS.get(skin_slug)
+    else:
+        seeds = INNER_BACKGROUND_SEEDS.get(frame_index)
     if not seeds:
         return frame
 
@@ -194,56 +201,6 @@ def clear_inner_background(frame: Image.Image, frame_index: int) -> Image.Image:
     neutral_fringe = expanded & (low >= 105) & ((high - low) <= 52)
     alpha[selected | neutral_fringe] = 0
     pixels[alpha == 0, :3] = 0
-    return Image.fromarray(pixels, mode="RGBA")
-
-
-def blend_lifted_shirt_matte(
-    frame: Image.Image, frame_index: int, skin_slug: str
-) -> Image.Image:
-    """Replace the false white V-edge in shirt_02 with the jersey colour."""
-
-    jersey_color = LIFTED_SHIRT_MATTE_COLORS.get(skin_slug)
-    if frame_index != 21 or jersey_color is None:
-        return frame
-
-    pixels = np.asarray(frame.convert("RGBA")).copy()
-    region = pixels[120:165, 118:187]
-    rgb = region[:, :, :3]
-    alpha = region[:, :, 3]
-    low = rgb.min(axis=2)
-    high = rgb.max(axis=2)
-    chroma = high - low
-    false_matte = (alpha > 0) & (low >= 130) & (chroma <= 60)
-
-    # Pull in the dimmer antialiased dots surrounding the bright matte. Skin
-    # is protected explicitly so the neck and gripping hands keep their tone.
-    expanded_matte = np.asarray(
-        Image.fromarray(false_matte.astype(np.uint8) * 255, mode="L").filter(
-            ImageFilter.MaxFilter(7)
-        )
-    ) > 0
-    red = rgb[:, :, 0]
-    green = rgb[:, :, 1]
-    blue = rgb[:, :, 2]
-    skin_like = (
-        (red >= 155)
-        & (red.astype(np.int16) >= green.astype(np.int16) + 8)
-        & (green.astype(np.int16) >= blue.astype(np.int16) + 8)
-    )
-    false_matte = (
-        expanded_matte
-        & (alpha > 0)
-        & (low >= 80)
-        & (chroma <= 85)
-        & ~skin_like
-    )
-
-    # Retain a little of the original luminance so the folded fabric keeps its
-    # shading instead of becoming a flat painted patch.
-    shade = np.clip(low.astype(np.float32) / 245.0, 0.72, 1.05)
-    for channel, base in enumerate(jersey_color):
-        values = np.clip(base * shade, 0, 255).astype(np.uint8)
-        rgb[:, :, channel][false_matte] = values[false_matte]
     return Image.fromarray(pixels, mode="RGBA")
 
 
@@ -363,8 +320,7 @@ def build_skin(slug: str, display_name: str) -> dict:
     alpha_counts: list[int] = []
     frames = cluster_frames(transparent_sheet)
     for index, (name, frame) in enumerate(zip(FRAME_NAMES, frames)):
-        frame = clear_inner_background(frame, index)
-        frame = blend_lifted_shirt_matte(frame, index, slug)
+        frame = clear_inner_background(frame, index, slug)
         row, column = divmod(index, GRID)
         output = frames_dir / f"{index + 1:02d}_{name}.png"
         frame.save(output, optimize=True)
