@@ -160,22 +160,14 @@ namespace CR7PetNative
         private const int WH_KEYBOARD_LL = 13;
         private const int WM_KEYDOWN = 0x0100;
         private const int WM_SYSKEYDOWN = 0x0104;
-        private const int VK_BACK = 0x08;
-        private const int VK_RETURN = 0x0D;
         private const int VK_7 = 0x37;
         private const int VK_NUMPAD7 = 0x67;
         private static LowLevelKeyboardProc callback = HookCallback;
         private static IntPtr hook = IntPtr.Zero;
         private static int switchCounter = 0;
-        private static int siuCounter = 0;
-        private static int bicycleCounter = 0;
         private static long lastSwitchMilliseconds = 0;
-        private static long lastSiuMilliseconds = 0;
-        private static long lastBicycleMilliseconds = 0;
 
         public static int SwitchCounter { get { return Volatile.Read(ref switchCounter); } }
-        public static int SiuCounter { get { return Volatile.Read(ref siuCounter); } }
-        public static int BicycleCounter { get { return Volatile.Read(ref bicycleCounter); } }
         public static bool IsInstalled { get { return hook != IntPtr.Zero; } }
 
         public static bool Install()
@@ -214,26 +206,6 @@ namespace CR7PetNative
                     {
                         Interlocked.Exchange(ref lastSwitchMilliseconds, now);
                         Interlocked.Increment(ref switchCounter);
-                    }
-                }
-                else if (key == VK_RETURN)
-                {
-                    long now = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
-                    long previous = Interlocked.Read(ref lastSiuMilliseconds);
-                    if (now - previous > 420)
-                    {
-                        Interlocked.Exchange(ref lastSiuMilliseconds, now);
-                        Interlocked.Increment(ref siuCounter);
-                    }
-                }
-                else if (key == VK_BACK)
-                {
-                    long now = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
-                    long previous = Interlocked.Read(ref lastBicycleMilliseconds);
-                    if (now - previous > 420)
-                    {
-                        Interlocked.Exchange(ref lastBicycleMilliseconds, now);
-                        Interlocked.Increment(ref bicycleCounter);
                     }
                 }
             }
@@ -446,8 +418,8 @@ if ($SelfTest) {
         framesMissing = @($missingAssets)
         alphaCornerErrors = @($alphaErrors)
         globalSevenHook = $hookInstalled
-        globalEnterSiu = $hookInstalled
-        globalBackspaceBicycle = $hookInstalled
+        globalEnterSiu = $false
+        globalBackspaceBicycle = $false
         globalHotkeysPassThrough = $true
         vsCodeSubmitBridge = [CR7PetNative.VSCodeBridge]::IsAvailable()
         audioVolumePercent = if ($audio) { [math]::Round($audio.Volume * 100) } else { $null }
@@ -887,8 +859,6 @@ $animationTimer.Interval = [TimeSpan]::FromMilliseconds([int]$config.animationTi
 $animationTimer.Add_Tick({ Update-PetAnimation })
 
 $script:LastHookCounter = 0
-$script:LastSiuCounter = 0
-$script:LastBicycleCounter = 0
 $hookTimer = New-Object System.Windows.Threading.DispatcherTimer
 $hookTimer.Interval = [TimeSpan]::FromMilliseconds(50)
 $hookTimer.Add_Tick({
@@ -896,18 +866,6 @@ $hookTimer.Add_Tick({
     if ($counter -ne $script:LastHookCounter) {
         $script:LastHookCounter = $counter
         Switch-PetSkin
-    }
-    $siuCounter = [CR7PetNative.KeyboardHook]::SiuCounter
-    if ($siuCounter -ne $script:LastSiuCounter) {
-        $script:LastSiuCounter = $siuCounter
-        Start-PetAnimation -Name 'siu' -Force
-        Write-PetLog 'Shortcut Enter: SIU'
-    }
-    $bicycleCounter = [CR7PetNative.KeyboardHook]::BicycleCounter
-    if ($bicycleCounter -ne $script:LastBicycleCounter) {
-        $script:LastBicycleCounter = $bicycleCounter
-        Start-PetAnimation -Name 'bicycle' -Force
-        Write-PetLog 'Shortcut Backspace: bicycle'
     }
 })
 
@@ -1006,22 +964,49 @@ $focusTimer = New-Object System.Windows.Threading.DispatcherTimer
 $focusTimer.Interval = [TimeSpan]::FromMilliseconds(90)
 $focusTimer.Add_Tick({ Update-VSCodeFocusMemory })
 
+function Get-RunningVSCodeWindow {
+    try {
+        $candidate = Get-Process -Name 'Code' -ErrorAction Stop |
+            Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } |
+            Sort-Object StartTime |
+            Select-Object -Last 1
+        if ($null -eq $candidate) { return $null }
+        return [pscustomobject]@{
+            Handle = [IntPtr]$candidate.MainWindowHandle
+            ProcessId = [int]$candidate.Id
+            ProcessName = 'Code'
+            Title = [string]$candidate.MainWindowTitle
+        }
+    }
+    catch { return $null }
+}
+
+function Restore-VSCodeWindow {
+    $foreground = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
+    if ($null -ne $foreground -and $foreground.ProcessName -ieq 'Code') { return $foreground }
+
+    $target = Get-RunningVSCodeWindow
+    if ($null -eq $target) { return $null }
+
+    [CR7PetNative.VSCodeBridge]::RestoreWindow($target.Handle) | Out-Null
+    Start-Sleep -Milliseconds 130
+    $foreground = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
+    if ($null -ne $foreground -and $foreground.ProcessName -ieq 'Code') {
+        $script:LastVSCodeInfo = $foreground
+        $script:LastVSCodeSeen = Get-Date
+        return $foreground
+    }
+    return $null
+}
+
 function Get-VSCodeForeground {
     param([switch]$AllowRecentRestore)
 
     $info = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
     if ($null -ne $info -and $info.ProcessName -ieq 'Code') { return $info }
 
-    if (
-        $AllowRecentRestore -and
-        $null -ne $script:LastVSCodeInfo -and
-        ((Get-Date) - $script:LastVSCodeSeen).TotalMilliseconds -le 3200
-    ) {
-        if ([CR7PetNative.VSCodeBridge]::RestoreWindow($script:LastVSCodeInfo.Handle)) {
-            Start-Sleep -Milliseconds 90
-            $info = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
-            if ($null -ne $info -and $info.ProcessName -ieq 'Code') { return $info }
-        }
+    if ($AllowRecentRestore) {
+        return Restore-VSCodeWindow
     }
     return $null
 }
@@ -1066,11 +1051,67 @@ function Get-FocusedAutomationContext {
 }
 
 $script:ConfirmationSemanticPattern = '(?i)permission\s*request|permissionRequest|approval\s*required|allow once|allow always|yes,?\s+allow|approve|confirmation|confirm action|press enter to confirm|do you want to proceed|request to run|run command|accept proposed|reject proposed'
+$script:LastBackgroundConfirmationScan = [DateTime]::MinValue
+$script:BackgroundConfirmationScanMs = 1400
+
+function Get-BackgroundClaudeConfirmationSnapshot {
+    $target = Get-RunningVSCodeWindow
+    if ($null -eq $target) {
+        return [pscustomobject]@{ Observed = $true; Active = $false; Detail = 'VSCodeClosed' }
+    }
+
+    try {
+        $rootElement = [System.Windows.Automation.AutomationElement]::FromHandle($target.Handle)
+        if ($null -eq $rootElement) {
+            return [pscustomobject]@{ Observed = $false; Active = $false; Detail = 'NoAutomationRoot' }
+        }
+
+        $elements = $rootElement.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.Condition]::TrueCondition
+        )
+        foreach ($element in $elements) {
+            try {
+                $automationId = [string]$element.Current.AutomationId
+                $className = [string]$element.Current.ClassName
+                $name = [string]$element.Current.Name
+                $controlType = [string]$element.Current.ControlType.ProgrammaticName
+                $containerEvidence = ($automationId + ' | ' + $className) -match '(?i)permissionRequest|permission[-_ ]?request'
+                $actionEvidence = $controlType -match 'Button|CheckBox|RadioButton|MenuItem|ListItem' -and $name -match $script:ConfirmationSemanticPattern
+                if (-not $containerEvidence -and -not $actionEvidence) { continue }
+
+                $ancestorText = New-Object System.Collections.Generic.List[string]
+                $cursor = $element
+                for ($depth = 0; $depth -lt 12 -and $null -ne $cursor; $depth++) {
+                    if (-not [string]::IsNullOrWhiteSpace([string]$cursor.Current.Name)) {
+                        $ancestorText.Add([string]$cursor.Current.Name)
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace([string]$cursor.Current.AutomationId)) {
+                        $ancestorText.Add([string]$cursor.Current.AutomationId)
+                    }
+                    $cursor = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($cursor)
+                }
+                if (($ancestorText -join ' | ') -match '(?i)\bclaude(?: code)?\b') {
+                    return [pscustomobject]@{ Observed = $true; Active = $true; Detail = 'BackgroundVSCode' }
+                }
+            }
+            catch { }
+        }
+        return [pscustomobject]@{ Observed = $true; Active = $false; Detail = 'BackgroundVSCode' }
+    }
+    catch {
+        return [pscustomobject]@{ Observed = $false; Active = $false; Detail = $_.Exception.Message }
+    }
+}
 
 function Get-ClaudeConfirmationSnapshot {
     $info = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
     if ($null -eq $info -or $info.ProcessName -ine 'Code') {
-        return [pscustomobject]@{ Observed = $false; Active = $false; Detail = '' }
+        if (((Get-Date) - $script:LastBackgroundConfirmationScan).TotalMilliseconds -lt $script:BackgroundConfirmationScanMs) {
+            return [pscustomobject]@{ Observed = $false; Active = $false; Detail = 'BackgroundScanThrottled' }
+        }
+        $script:LastBackgroundConfirmationScan = Get-Date
+        return Get-BackgroundClaudeConfirmationSnapshot
     }
 
     $automation = Get-FocusedAutomationContext
@@ -1175,20 +1216,25 @@ function Invoke-ClaudeConfirmationPulse {
     $script:ClaudeConfirmationLastPulse = Get-Date
 }
 
+function Update-ClaudeConfirmationPresentation {
+    param([switch]$ForcePulse)
+
+    $pulseDue = ((Get-Date) - $script:ClaudeConfirmationLastPulse).TotalMilliseconds -ge $script:ClaudeConfirmationPulseMs
+    if ($ForcePulse -or $pulseDue) {
+        Invoke-ClaudeConfirmationPulse
+    }
+    elseif (-not $script:BubblePersistent -or $bubbleText.Text -ne $script:ClaudeConfirmationMessage) {
+        Show-ClaudeConfirmationCard
+    }
+}
+
 function Enter-ClaudeConfirmationState {
     param([switch]$ForcePulse)
 
     $wasActive = $script:ClaudeConfirmationActive
     $script:ClaudeConfirmationActive = $true
     $script:ClaudeConfirmationMissingPolls = 0
-    $pulseDue = ((Get-Date) - $script:ClaudeConfirmationLastPulse).TotalMilliseconds -ge $script:ClaudeConfirmationPulseMs
-
-    if (-not $wasActive -or $ForcePulse -or $pulseDue) {
-        Invoke-ClaudeConfirmationPulse
-    }
-    elseif (-not $script:BubblePersistent -or $bubbleText.Text -ne $script:ClaudeConfirmationMessage) {
-        Show-ClaudeConfirmationCard
-    }
+    Update-ClaudeConfirmationPresentation -ForcePulse:($ForcePulse -or -not $wasActive)
 
     if (-not $wasActive) {
         Write-PetLog 'Claude confirmation detected: persistent Calma state entered.'
@@ -1200,12 +1246,13 @@ function Exit-ClaudeConfirmationState {
     $script:ClaudeConfirmationActive = $false
     $script:ClaudeConfirmationMissingPolls = 0
     $script:BubblePersistent = $false
+    Start-PetAnimation -Name 'siu' -Force
     Show-PetMessage `
-        -Text 'CLAUDE CONFIRMATION CLOSED' `
-        -Milliseconds 1550 `
+        -Text 'CLAUDE CONFIRMED  /  SIUUU!' `
+        -Milliseconds 1900 `
         -Tone 'Success' `
-        -Subtitle 'The action request is no longer active'
-    Write-PetLog 'Claude confirmation cleared: persistent Calma state exited.'
+        -Subtitle 'Claude is continuing'
+    Write-PetLog 'Claude confirmation resolved: persistent Calma exited with SIU.'
 }
 
 $confirmationTimer = New-Object System.Windows.Threading.DispatcherTimer
@@ -1226,13 +1273,15 @@ $confirmationTimer.Add_Tick({
                 Exit-ClaudeConfirmationState
                 return
             }
+            Update-ClaudeConfirmationPresentation
+            return
         }
         elseif (@(Get-Process -Name 'Code' -ErrorAction SilentlyContinue).Count -eq 0) {
             Exit-ClaudeConfirmationState
             return
         }
 
-        Enter-ClaudeConfirmationState
+        Update-ClaudeConfirmationPresentation
     }
     catch {
         Write-PetLog ('Claude confirmation sensor: ' + $_.Exception.Message)
@@ -1380,9 +1429,33 @@ $singleClickTimer = New-Object System.Windows.Threading.DispatcherTimer
 $singleClickTimer.Interval = [TimeSpan]::FromMilliseconds(280)
 $singleClickTimer.Add_Tick({
     $singleClickTimer.Stop()
-    $submitResult = Submit-FocusedAIPrompt -PreferredProvider 'Auto'
-    if ($submitResult -eq 'NotVSCode') {
-        Start-PetAnimation -Name 'siu' -Force
+    $foreground = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
+    if ($null -ne $foreground -and $foreground.ProcessName -ieq 'Code') {
+        Submit-FocusedAIPrompt -PreferredProvider 'Auto' | Out-Null
+        return
+    }
+
+    $restored = Restore-VSCodeWindow
+    if ($null -ne $restored) {
+        if ($script:ClaudeConfirmationActive) {
+            Enter-ClaudeConfirmationState -ForcePulse
+        }
+        else {
+            Show-PetMessage `
+                -Text 'VS CODE RESTORED' `
+                -Milliseconds 1350 `
+                -Tone 'Info' `
+                -Subtitle 'Ready for Claude or Codex'
+        }
+        Write-PetLog 'Single-click: restored the existing VS Code window.'
+    }
+    else {
+        Show-PetMessage `
+            -Text 'VS CODE IS NOT RUNNING' `
+            -Milliseconds 1550 `
+            -Tone 'Warning' `
+            -Subtitle 'Double-click the pet to open it'
+        Write-PetLog 'Single-click: VS Code was not running.'
     }
 })
 
@@ -1446,8 +1519,6 @@ $window.Add_ContentRendered({
             Write-PetLog 'Global shortcut hook could not be installed.'
         }
         $script:LastHookCounter = [CR7PetNative.KeyboardHook]::SwitchCounter
-        $script:LastSiuCounter = [CR7PetNative.KeyboardHook]::SiuCounter
-        $script:LastBicycleCounter = [CR7PetNative.KeyboardHook]::BicycleCounter
         try {
             $snapshot = [CR7PetNative.Sensors]::ReadAudio()
             $script:LastVolume = $snapshot.Volume
