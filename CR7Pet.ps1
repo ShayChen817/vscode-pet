@@ -550,28 +550,107 @@ $transformGroup.Children.Add($translateTransform)
 $petImage.RenderTransform = $transformGroup
 
 $bubble = New-Object System.Windows.Controls.Border
-$bubble.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(242, 15, 18, 26))
+$bubble.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(247, 15, 18, 26))
 $bubble.BorderBrush = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(239, 184, 64))
-$bubble.BorderThickness = New-Object System.Windows.Thickness(1.5)
-$bubble.CornerRadius = New-Object System.Windows.CornerRadius(14)
-$bubble.Padding = New-Object System.Windows.Thickness(14, 7, 14, 7)
+$bubble.BorderThickness = New-Object System.Windows.Thickness(1.25)
+$bubble.CornerRadius = New-Object System.Windows.CornerRadius(18)
+$bubble.Padding = New-Object System.Windows.Thickness(12, 10, 14, 10)
 $bubble.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
 $bubble.VerticalAlignment = [System.Windows.VerticalAlignment]::Top
-$bubble.Margin = New-Object System.Windows.Thickness(12, 5, 12, 0)
+$bubble.Margin = New-Object System.Windows.Thickness(8, 6, 8, 0)
+$bubble.MinWidth = 238
+$bubble.MaxWidth = 304
+$bubble.SnapsToDevicePixels = $true
+$bubble.IsHitTestVisible = $false
 $bubble.Visibility = [System.Windows.Visibility]::Collapsed
+
+$bubbleShadow = New-Object System.Windows.Media.Effects.DropShadowEffect
+$bubbleShadow.Color = [System.Windows.Media.Color]::FromRgb(0, 0, 0)
+$bubbleShadow.BlurRadius = 18
+$bubbleShadow.Direction = 270
+$bubbleShadow.ShadowDepth = 4
+$bubbleShadow.Opacity = 0.42
+$bubble.Effect = $bubbleShadow
+
+$bubbleGrid = New-Object System.Windows.Controls.Grid
+$railColumn = New-Object System.Windows.Controls.ColumnDefinition
+$railColumn.Width = New-Object System.Windows.GridLength(5)
+$iconColumn = New-Object System.Windows.Controls.ColumnDefinition
+$iconColumn.Width = New-Object System.Windows.GridLength(42)
+$copyColumn = New-Object System.Windows.Controls.ColumnDefinition
+$copyColumn.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+$bubbleGrid.ColumnDefinitions.Add($railColumn)
+$bubbleGrid.ColumnDefinitions.Add($iconColumn)
+$bubbleGrid.ColumnDefinitions.Add($copyColumn)
+
+$bubbleRail = New-Object System.Windows.Controls.Border
+$bubbleRail.Width = 4
+$bubbleRail.CornerRadius = New-Object System.Windows.CornerRadius(2)
+$bubbleRail.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
+$bubbleRail.Margin = New-Object System.Windows.Thickness(0, 1, 0, 1)
+[System.Windows.Controls.Grid]::SetColumn($bubbleRail, 0)
+$bubbleGrid.Children.Add($bubbleRail) | Out-Null
+
+$bubbleIconShell = New-Object System.Windows.Controls.Border
+$bubbleIconShell.Width = 30
+$bubbleIconShell.Height = 30
+$bubbleIconShell.CornerRadius = New-Object System.Windows.CornerRadius(15)
+$bubbleIconShell.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+$bubbleIconShell.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+[System.Windows.Controls.Grid]::SetColumn($bubbleIconShell, 1)
+
+$bubbleIcon = New-Object System.Windows.Controls.TextBlock
+$bubbleIcon.FontFamily = New-Object System.Windows.Media.FontFamily('Segoe UI Semibold')
+$bubbleIcon.FontSize = 14
+$bubbleIcon.FontWeight = [System.Windows.FontWeights]::Bold
+$bubbleIcon.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+$bubbleIcon.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+$bubbleIcon.TextAlignment = [System.Windows.TextAlignment]::Center
+$bubbleIconShell.Child = $bubbleIcon
+$bubbleGrid.Children.Add($bubbleIconShell) | Out-Null
+
+$bubbleCopy = New-Object System.Windows.Controls.StackPanel
+$bubbleCopy.Orientation = [System.Windows.Controls.Orientation]::Vertical
+$bubbleCopy.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+[System.Windows.Controls.Grid]::SetColumn($bubbleCopy, 2)
+
+$bubbleLabel = New-Object System.Windows.Controls.TextBlock
+$bubbleLabel.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(168, 174, 190))
+$bubbleLabel.FontFamily = New-Object System.Windows.Media.FontFamily('Segoe UI Semibold')
+$bubbleLabel.FontSize = 9
+$bubbleLabel.FontWeight = [System.Windows.FontWeights]::SemiBold
+$bubbleLabel.Margin = New-Object System.Windows.Thickness(0, 0, 0, 2)
+$bubbleCopy.Children.Add($bubbleLabel) | Out-Null
 
 $bubbleText = New-Object System.Windows.Controls.TextBlock
 $bubbleText.Foreground = [System.Windows.Media.Brushes]::White
 $bubbleText.FontFamily = New-Object System.Windows.Media.FontFamily('Segoe UI Semibold')
-$bubbleText.FontSize = 13
-$bubbleText.TextAlignment = [System.Windows.TextAlignment]::Center
+$bubbleText.FontSize = 12.5
+$bubbleText.FontWeight = [System.Windows.FontWeights]::SemiBold
+$bubbleText.TextAlignment = [System.Windows.TextAlignment]::Left
 $bubbleText.TextWrapping = [System.Windows.TextWrapping]::Wrap
-$bubble.Child = $bubbleText
-$root.Children.Add($bubble) | Out-Null
+$bubbleCopy.Children.Add($bubbleText) | Out-Null
 
+$bubbleSubtitle = New-Object System.Windows.Controls.TextBlock
+$bubbleSubtitle.Foreground = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromRgb(188, 193, 207))
+$bubbleSubtitle.FontFamily = New-Object System.Windows.Media.FontFamily('Segoe UI')
+$bubbleSubtitle.FontSize = 10
+$bubbleSubtitle.TextAlignment = [System.Windows.TextAlignment]::Left
+$bubbleSubtitle.TextWrapping = [System.Windows.TextWrapping]::Wrap
+$bubbleSubtitle.Margin = New-Object System.Windows.Thickness(0, 2, 0, 0)
+$bubbleSubtitle.Visibility = [System.Windows.Visibility]::Collapsed
+$bubbleCopy.Children.Add($bubbleSubtitle) | Out-Null
+
+$bubbleGrid.Children.Add($bubbleCopy) | Out-Null
+$bubble.Child = $bubbleGrid
+$root.Children.Add($bubble) | Out-Null
+[System.Windows.Controls.Panel]::SetZIndex($bubble, 20)
+
+$script:BubblePersistent = $false
 $bubbleTimer = New-Object System.Windows.Threading.DispatcherTimer
 $bubbleTimer.Add_Tick({
     $bubbleTimer.Stop()
+    if ($script:BubblePersistent) { return }
     $bubble.Visibility = [System.Windows.Visibility]::Collapsed
 })
 
@@ -580,24 +659,50 @@ function Show-PetMessage {
         [string]$Text,
         [int]$Milliseconds = 1300,
         [ValidateSet('Gold', 'Success', 'Info', 'Warning', 'Error', 'Claude', 'Codex')]
-        [string]$Tone = 'Gold'
+        [string]$Tone = 'Gold',
+        [string]$Subtitle = '',
+        [switch]$Persistent
     )
     if ([string]::IsNullOrWhiteSpace($Text)) { return }
-    $borderColor = switch ($Tone) {
-        'Success' { [System.Windows.Media.Color]::FromRgb(56, 211, 159) }
-        'Info' { [System.Windows.Media.Color]::FromRgb(103, 164, 255) }
-        'Warning' { [System.Windows.Media.Color]::FromRgb(239, 184, 64) }
-        'Error' { [System.Windows.Media.Color]::FromRgb(255, 98, 105) }
-        'Claude' { [System.Windows.Media.Color]::FromRgb(218, 119, 87) }
-        'Codex' { [System.Windows.Media.Color]::FromRgb(66, 207, 164) }
-        default { [System.Windows.Media.Color]::FromRgb(239, 184, 64) }
+    $visual = switch ($Tone) {
+        'Success' { @{ Accent = [System.Windows.Media.Color]::FromRgb(56, 211, 159); Surface = [System.Windows.Media.Color]::FromArgb(248, 12, 26, 25); Label = 'COMPLETED'; Icon = [char]0x2713 } }
+        'Info' { @{ Accent = [System.Windows.Media.Color]::FromRgb(103, 164, 255); Surface = [System.Windows.Media.Color]::FromArgb(248, 13, 20, 33); Label = 'VS CODE PET'; Icon = 'i' } }
+        'Warning' { @{ Accent = [System.Windows.Media.Color]::FromRgb(239, 184, 64); Surface = [System.Windows.Media.Color]::FromArgb(248, 29, 24, 13); Label = 'ATTENTION'; Icon = '!' } }
+        'Error' { @{ Accent = [System.Windows.Media.Color]::FromRgb(255, 98, 105); Surface = [System.Windows.Media.Color]::FromArgb(248, 32, 14, 20); Label = 'BLOCKED'; Icon = [char]0x00D7 } }
+        'Claude' { @{ Accent = [System.Windows.Media.Color]::FromRgb(224, 128, 92); Surface = [System.Windows.Media.Color]::FromArgb(250, 31, 20, 17); Label = 'CLAUDE  /  ACTION REQUIRED'; Icon = 'C' } }
+        'Codex' { @{ Accent = [System.Windows.Media.Color]::FromRgb(66, 207, 164); Surface = [System.Windows.Media.Color]::FromArgb(248, 11, 27, 25); Label = 'CODEX'; Icon = 'C' } }
+        default { @{ Accent = [System.Windows.Media.Color]::FromRgb(239, 184, 64); Surface = [System.Windows.Media.Color]::FromArgb(247, 15, 18, 26); Label = 'VS CODE PET'; Icon = '7' } }
     }
-    $bubble.BorderBrush = New-Object System.Windows.Media.SolidColorBrush($borderColor)
+    $accentBrush = New-Object System.Windows.Media.SolidColorBrush($visual.Accent)
+    $iconSurface = [System.Windows.Media.Color]::FromArgb(46, $visual.Accent.R, $visual.Accent.G, $visual.Accent.B)
+    $bubble.Background = New-Object System.Windows.Media.SolidColorBrush($visual.Surface)
+    $bubble.BorderBrush = $accentBrush
+    $bubbleRail.Background = $accentBrush
+    $bubbleIcon.Foreground = $accentBrush
+    $bubbleIconShell.Background = New-Object System.Windows.Media.SolidColorBrush($iconSurface)
+    $bubbleIcon.Text = [string]$visual.Icon
+    $bubbleLabel.Text = [string]$visual.Label
     $bubbleText.Text = $Text
+    $bubbleSubtitle.Text = $Subtitle
+    $bubbleSubtitle.Visibility = if ([string]::IsNullOrWhiteSpace($Subtitle)) {
+        [System.Windows.Visibility]::Collapsed
+    }
+    else {
+        [System.Windows.Visibility]::Visible
+    }
     $bubble.Visibility = [System.Windows.Visibility]::Visible
     $bubbleTimer.Stop()
-    $bubbleTimer.Interval = [TimeSpan]::FromMilliseconds($Milliseconds)
-    $bubbleTimer.Start()
+    $script:BubblePersistent = [bool]$Persistent
+    if (-not $Persistent) {
+        $bubbleTimer.Interval = [TimeSpan]::FromMilliseconds($Milliseconds)
+        $bubbleTimer.Start()
+    }
+}
+
+function Hide-PetMessage {
+    $script:BubblePersistent = $false
+    $bubbleTimer.Stop()
+    $bubble.Visibility = [System.Windows.Visibility]::Collapsed
 }
 
 $script:Animations = @{
@@ -960,6 +1065,38 @@ function Get-FocusedAutomationContext {
     }
 }
 
+$script:ConfirmationSemanticPattern = '(?i)permission\s*request|permissionRequest|approval\s*required|allow once|allow always|yes,?\s+allow|approve|confirmation|confirm action|press enter to confirm|do you want to proceed|request to run|run command|accept proposed|reject proposed'
+
+function Get-ClaudeConfirmationSnapshot {
+    $info = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
+    if ($null -eq $info -or $info.ProcessName -ine 'Code') {
+        return [pscustomobject]@{ Observed = $false; Active = $false; Detail = '' }
+    }
+
+    $automation = Get-FocusedAutomationContext
+    if (-not [string]::IsNullOrWhiteSpace($automation.ProcessName) -and $automation.ProcessName -ine 'Code') {
+        return [pscustomobject]@{ Observed = $true; Active = $false; Detail = $automation.ControlType }
+    }
+
+    $automationSemantic = @(
+        $automation.Names
+        $automation.AutomationIds
+        $automation.ClassNames
+    ) -join ' | '
+    $semantic = ([string]$info.Title) + ' | ' + $automationSemantic
+    $claudeEvidence = ([string]$info.Title) -match '(?i)\[\s*Claude Code\s*\]' -or $semantic -match '(?i)\bclaude(?: code)?\b'
+    $confirmationContainer = $automationSemantic -match '(?i)permissionRequest|permission[-_ ]?request|confirmation|approval'
+    $actionControl = $automation.ControlType -match 'Button|CheckBox|RadioButton|MenuItem|ListItem'
+    $confirmationText = $semantic -match $script:ConfirmationSemanticPattern
+    $active = $claudeEvidence -and ($confirmationContainer -or ($actionControl -and $confirmationText))
+
+    return [pscustomobject]@{
+        Observed = $true
+        Active = [bool]$active
+        Detail = $automation.ControlType
+    }
+}
+
 function Get-AISubmitContext {
     param(
         [ValidateSet('Auto', 'Claude', 'Codex')]
@@ -985,7 +1122,7 @@ function Get-AISubmitContext {
     $semantic = ([string]$info.Title) + ' | ' + $automationSemantic
 
     $buttonLike = $automation.ControlType -match 'Button|CheckBox|RadioButton|MenuItem|ListItem|Hyperlink|Window'
-    $dangerousText = $semantic -match '(?i)permission\s*request|permissionRequest|allow once|allow always|yes,?\s+allow|approve|confirmation|confirm action|press enter to confirm|do you want to proceed|run command|accept proposed|reject proposed'
+    $dangerousText = $semantic -match $script:ConfirmationSemanticPattern
     if ($buttonLike -or $dangerousText) {
         return [pscustomobject]@{ Ready = $false; Status = 'ConfirmationBlocked'; Provider = ''; ControlEnter = $false; Detail = $automation.ControlType }
     }
@@ -1018,6 +1155,90 @@ function Get-AISubmitContext {
     }
 }
 
+$script:ClaudeConfirmationActive = $false
+$script:ClaudeConfirmationMissingPolls = 0
+$script:ClaudeConfirmationLastPulse = [DateTime]::MinValue
+$script:ClaudeConfirmationMessage = 'CLAUDE NEEDS CONFIRMATION'
+$script:ClaudeConfirmationPulseMs = 2800
+
+function Show-ClaudeConfirmationCard {
+    Show-PetMessage `
+        -Text $script:ClaudeConfirmationMessage `
+        -Tone 'Claude' `
+        -Subtitle 'Review the request in VS Code' `
+        -Persistent
+}
+
+function Invoke-ClaudeConfirmationPulse {
+    Start-PetAnimation -Name 'calma' -Force
+    Show-ClaudeConfirmationCard
+    $script:ClaudeConfirmationLastPulse = Get-Date
+}
+
+function Enter-ClaudeConfirmationState {
+    param([switch]$ForcePulse)
+
+    $wasActive = $script:ClaudeConfirmationActive
+    $script:ClaudeConfirmationActive = $true
+    $script:ClaudeConfirmationMissingPolls = 0
+    $pulseDue = ((Get-Date) - $script:ClaudeConfirmationLastPulse).TotalMilliseconds -ge $script:ClaudeConfirmationPulseMs
+
+    if (-not $wasActive -or $ForcePulse -or $pulseDue) {
+        Invoke-ClaudeConfirmationPulse
+    }
+    elseif (-not $script:BubblePersistent -or $bubbleText.Text -ne $script:ClaudeConfirmationMessage) {
+        Show-ClaudeConfirmationCard
+    }
+
+    if (-not $wasActive) {
+        Write-PetLog 'Claude confirmation detected: persistent Calma state entered.'
+    }
+}
+
+function Exit-ClaudeConfirmationState {
+    if (-not $script:ClaudeConfirmationActive) { return }
+    $script:ClaudeConfirmationActive = $false
+    $script:ClaudeConfirmationMissingPolls = 0
+    $script:BubblePersistent = $false
+    Show-PetMessage `
+        -Text 'CLAUDE CONFIRMATION CLOSED' `
+        -Milliseconds 1550 `
+        -Tone 'Success' `
+        -Subtitle 'The action request is no longer active'
+    Write-PetLog 'Claude confirmation cleared: persistent Calma state exited.'
+}
+
+$confirmationTimer = New-Object System.Windows.Threading.DispatcherTimer
+$confirmationTimer.Interval = [TimeSpan]::FromMilliseconds(420)
+$confirmationTimer.Add_Tick({
+    try {
+        $snapshot = Get-ClaudeConfirmationSnapshot
+        if ($snapshot.Active) {
+            Enter-ClaudeConfirmationState
+            return
+        }
+
+        if (-not $script:ClaudeConfirmationActive) { return }
+
+        if ($snapshot.Observed) {
+            $script:ClaudeConfirmationMissingPolls++
+            if ($script:ClaudeConfirmationMissingPolls -ge 3) {
+                Exit-ClaudeConfirmationState
+                return
+            }
+        }
+        elseif (@(Get-Process -Name 'Code' -ErrorAction SilentlyContinue).Count -eq 0) {
+            Exit-ClaudeConfirmationState
+            return
+        }
+
+        Enter-ClaudeConfirmationState
+    }
+    catch {
+        Write-PetLog ('Claude confirmation sensor: ' + $_.Exception.Message)
+    }
+})
+
 function Submit-FocusedAIPrompt {
     param(
         [ValidateSet('Auto', 'Claude', 'Codex')]
@@ -1032,7 +1253,17 @@ function Submit-FocusedAIPrompt {
                 if ($ShowInactiveMessage) { Show-PetMessage -Text 'VS CODE NOT ACTIVE' -Milliseconds 1450 -Tone 'Warning' }
             }
             'ConfirmationBlocked' {
-                Show-PetMessage -Text 'CONFIRMATION BLOCKED' -Milliseconds 1700 -Tone 'Error'
+                $confirmationSnapshot = Get-ClaudeConfirmationSnapshot
+                if ($confirmationSnapshot.Active) {
+                    Enter-ClaudeConfirmationState -ForcePulse
+                }
+                else {
+                    Show-PetMessage `
+                        -Text 'CONFIRMATION BLOCKED' `
+                        -Milliseconds 1700 `
+                        -Tone 'Error' `
+                        -Subtitle 'Return to a Claude or Codex prompt'
+                }
                 Write-PetLog ('AI submit blocked: confirmation control ' + $context.Detail)
             }
             default {
@@ -1227,7 +1458,7 @@ $window.Add_ContentRendered({
         if ($initialBrightness -ge 0) { $script:LastBrightness = $initialBrightness }
         $script:CodexWasRunning = @(Get-Process -Name 'ChatGPT', 'codex' -ErrorAction SilentlyContinue).Count -gt 0
 
-        foreach ($timer in @($animationTimer, $hookTimer, $volumeTimer, $brightnessTimer, $codexTimer, $focusTimer)) {
+        foreach ($timer in @($animationTimer, $hookTimer, $volumeTimer, $brightnessTimer, $codexTimer, $focusTimer, $confirmationTimer)) {
             $timer.Start()
         }
         Start-PetAnimation -Name 'bicycle' -Force
@@ -1246,7 +1477,7 @@ if ($DebugWindow) {
 }
 
 $window.Add_Closed({
-    foreach ($timer in @($animationTimer, $hookTimer, $volumeTimer, $brightnessTimer, $codexTimer, $focusTimer, $bubbleTimer, $singleClickTimer, $demoTimer)) {
+    foreach ($timer in @($animationTimer, $hookTimer, $volumeTimer, $brightnessTimer, $codexTimer, $focusTimer, $confirmationTimer, $bubbleTimer, $singleClickTimer, $demoTimer)) {
         $timer.Stop()
     }
     [CR7PetNative.KeyboardHook]::Uninstall()

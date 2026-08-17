@@ -88,6 +88,17 @@ Successful actions report **SENT / CLAUDE** or **SENT / CODEX** in the status bu
 
 > The bridge is intentionally manual. It never submits on a timer, never stores or transmits prompt content, and never turns a permission dialog into an automatic approval.
 
+### Claude confirmation state
+
+When a visible Claude Code permission or command confirmation takes focus, the pet enters a dedicated action-required state:
+
+- Calma plays immediately, then repeats at a restrained interval while Claude is waiting;
+- a persistent warm-toned status card displays **CLAUDE NEEDS CONFIRMATION** and **Review the request in VS Code**;
+- the card remains visible when another app briefly receives focus and clears only after the request disappears or VS Code closes;
+- clicking the pet refreshes the Calma response but never approves the request automatically.
+
+The status card uses a compact information hierarchy — provider label, action title, supporting instruction, state icon, accent rail, and shadow — while remaining non-interactive so it never steals the prompt focus.
+
 ## System-aware celebrations
 
 The pet listens to a small set of local Windows state changes and maps them to recognizable actions.
@@ -95,6 +106,7 @@ The pet listens to a small set of local Windows state changes and maps them to r
 | Windows or app event | Character action |
 | --- | --- |
 | Pet starts, or Codex/ChatGPT opens while the pet is running | Five-frame bicycle kick |
+| Claude Code waits for a permission or command confirmation | Persistent action-required card with repeating Calma |
 | Audio becomes muted | Five-frame bicycle kick |
 | Volume decreases without mute | Calma, with palms moving downward |
 | Volume increases | Eyes closed, hands over chest: the meditation celebration |
