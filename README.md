@@ -41,15 +41,13 @@ Press global **7** or **Numpad 7** to move between all five skins. Every era has
 | Interaction | Result |
 | --- | --- |
 | **Single-click the pet with a verified Claude or Codex input focused** | Submit the prompt and play Point → Ground → SIU |
-| **Single-click while VS Code is not active** | Play SIU only; no key is sent to another app |
+| **Single-click while another app is active** | Restore the existing VS Code window without submitting anything |
 | **Single-click over a non-AI VS Code control** | Block submission and show **FOCUS CLAUDE OR CODEX** |
 | **Double-click** | Play the shirt-rip celebration and open VS Code only if it is not already running |
 | **Hover while resting** | Play one restrained standing sway, then become still again |
 | **Left-drag** | Reposition the pet anywhere on the desktop |
 | **Right-click** | Open the English action menu, including explicit Claude and Codex submit actions |
 | **7 / Numpad 7** | Cycle to the next character era while passing the key through |
-| **Enter** | Play SIU while allowing Enter to continue to the active app |
-| **Backspace** | Play the bicycle kick while allowing Backspace to continue to the active app |
 
 The window is always-on-top but deliberately **non-activating**. Clicking the character does not steal keyboard focus from the prompt you are writing in VS Code.
 
@@ -60,7 +58,7 @@ VS Code Pet turns the character into a small, focus-preserving submit control fo
 ```mermaid
 flowchart LR
     A["Click the pet"] --> B{"VS Code active?"}
-    B -- No --> C["SIU only"]
+    B -- No --> C["Restore existing VS Code window"]
     B -- Yes --> D["Inspect focused UI control"]
     D --> E{"Claude or Codex input?"}
     E -- No --> F["Block and show focus guidance"]
@@ -90,12 +88,14 @@ Successful actions report **SENT / CLAUDE** or **SENT / CODEX** in the status bu
 
 ### Claude confirmation state
 
-When a visible Claude Code permission or command confirmation takes focus, the pet enters a dedicated action-required state:
+When a visible Claude Code permission or command confirmation appears, the pet enters a dedicated action-required state:
 
 - Calma plays immediately, then repeats at a restrained interval while Claude is waiting;
 - a persistent warm-toned status card displays **CLAUDE NEEDS CONFIRMATION** and **Review the request in VS Code**;
-- the card remains visible when another app briefly receives focus and clears only after the request disappears or VS Code closes;
+- a throttled background accessibility scan can discover the request even while another app is in front;
+- the card remains visible across app switches and clears only after the request disappears or VS Code closes;
 - clicking the pet refreshes the Calma response but never approves the request automatically.
+- once the confirmation disappears, the pet plays SIU and reports **CLAUDE CONFIRMED / SIUUU!**.
 
 The status card uses a compact information hierarchy — provider label, action title, supporting instruction, state icon, accent rail, and shadow — while remaining non-interactive so it never steals the prompt focus.
 
@@ -106,7 +106,7 @@ The pet listens to a small set of local Windows state changes and maps them to r
 | Windows or app event | Character action |
 | --- | --- |
 | Pet starts, or Codex/ChatGPT opens while the pet is running | Five-frame bicycle kick |
-| Claude Code waits for a permission or command confirmation | Persistent action-required card with repeating Calma |
+| Claude Code waits for a permission or command confirmation | Persistent action-required card with repeating Calma; SIU after resolution |
 | Audio becomes muted | Five-frame bicycle kick |
 | Volume decreases without mute | Calma, with palms moving downward |
 | Volume increases | Eyes closed, hands over chest: the meditation celebration |
@@ -184,7 +184,7 @@ The self-test validates:
 - the WPF per-pixel-alpha engine and English UI;
 - all five skins and all 125 animation frames;
 - transparent image corners and missing-frame errors;
-- global 7, Enter, and Backspace hooks;
+- the global 7 skin-switch hook, with Enter and Backspace deliberately unbound;
 - the guarded VS Code submit bridge;
 - Core Audio access and WMI brightness support.
 
@@ -217,7 +217,7 @@ VS Code Pet/
 
 - The runtime makes no external API calls and requires no Claude, Codex, or OpenAI API key.
 - It inspects accessibility labels and control IDs only for focus validation; it does not store or transmit prompt text.
-- Global 7, Enter, and Backspace hooks trigger animation only and pass the original key through.
+- Global 7 changes the skin and passes through; Enter and Backspace are not observed by the pet.
 - AI submission is allowed only after provider, focus, editable-control, and confirmation checks pass.
 - All animations, accessibility inspection, system-state polling, settings reads, and logs stay on the local machine.
 
