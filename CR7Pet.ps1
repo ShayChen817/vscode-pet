@@ -253,7 +253,19 @@ namespace CR7PetNative
         [StructLayout(LayoutKind.Explicit)]
         private struct InputUnion
         {
+            [FieldOffset(0)] public MOUSEINPUT mouse;
             [FieldOffset(0)] public KEYBDINPUT keyboard;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MOUSEINPUT
+        {
+            public int dx;
+            public int dy;
+            public uint mouseData;
+            public uint flags;
+            public uint time;
+            public UIntPtr extraInfo;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -268,7 +280,18 @@ namespace CR7PetNative
 
         public static bool IsAvailable()
         {
-            return Marshal.SizeOf(typeof(INPUT)) > 0;
+            int expectedSize = IntPtr.Size == 8 ? 40 : 28;
+            return Marshal.SizeOf(typeof(INPUT)) == expectedSize;
+        }
+
+        public static int GetInputSize()
+        {
+            return Marshal.SizeOf(typeof(INPUT));
+        }
+
+        public static int GetDoubleClickMilliseconds()
+        {
+            return (int)GetDoubleClickTime();
         }
 
         public static ForegroundWindowInfo GetForegroundInfo()
@@ -305,7 +328,41 @@ namespace CR7PetNative
         {
             if (handle == IntPtr.Zero || !IsWindow(handle)) return false;
             ShowWindowAsync(handle, SW_RESTORE);
-            return SetForegroundWindow(handle);
+            if (GetForegroundWindow() == handle) return true;
+
+            uint currentThread = GetCurrentThreadId();
+            uint targetProcess;
+            uint targetThread = GetWindowThreadProcessId(handle, out targetProcess);
+            IntPtr foreground = GetForegroundWindow();
+            uint foregroundProcess = 0;
+            uint foregroundThread = foreground == IntPtr.Zero
+                ? 0
+                : GetWindowThreadProcessId(foreground, out foregroundProcess);
+            bool attachedForeground = false;
+            bool attachedTarget = false;
+            try
+            {
+                if (foregroundThread != 0 && foregroundThread != currentThread)
+                    attachedForeground = AttachThreadInput(currentThread, foregroundThread, true);
+                if (targetThread != 0 && targetThread != currentThread)
+                    attachedTarget = AttachThreadInput(currentThread, targetThread, true);
+
+                BringWindowToTop(handle);
+                SetForegroundWindow(handle);
+                SetFocus(handle);
+                Thread.Sleep(35);
+                return GetForegroundWindow() == handle;
+            }
+            finally
+            {
+                if (attachedTarget) AttachThreadInput(currentThread, targetThread, false);
+                if (attachedForeground) AttachThreadInput(currentThread, foregroundThread, false);
+            }
+        }
+
+        public static bool IsWindowMinimized(IntPtr handle)
+        {
+            return handle != IntPtr.Zero && IsWindow(handle) && IsIconic(handle);
         }
 
         public static bool SendSubmitKey(bool controlEnter)
@@ -339,14 +396,20 @@ namespace CR7PetNative
         }
 
         [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] private static extern uint GetDoubleClickTime();
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
+        [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr handle, StringBuilder text, int count);
         [DllImport("user32.dll")] private static extern int GetWindowTextLength(IntPtr handle);
         [DllImport("user32.dll", SetLastError = true)] private static extern int GetWindowLong(IntPtr handle, int index);
         [DllImport("user32.dll", SetLastError = true)] private static extern int SetWindowLong(IntPtr handle, int index, int value);
         [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr handle);
+        [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr handle);
         [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr handle, int command);
+        [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+        [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr handle);
         [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr handle);
+        [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr handle);
         [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, INPUT[] inputs, int size);
     }
 }
@@ -422,6 +485,7 @@ if ($SelfTest) {
         globalBackspaceBicycle = $false
         globalHotkeysPassThrough = $true
         vsCodeSubmitBridge = [CR7PetNative.VSCodeBridge]::IsAvailable()
+        nativeInputStructBytes = [CR7PetNative.VSCodeBridge]::GetInputSize()
         audioVolumePercent = if ($audio) { [math]::Round($audio.Volume * 100) } else { $null }
         audioMuted = if ($audio) { $audio.Muted } else { $null }
         audioError = $audioError
@@ -914,15 +978,10 @@ $script:CodexWasRunning = $false
 $codexTimer = New-Object System.Windows.Threading.DispatcherTimer
 $codexTimer.Interval = [TimeSpan]::FromMilliseconds([int]$config.codexPollMs)
 $codexTimer.Add_Tick({
-    if (-not [bool]$config.triggerOnCodexOpen) { return }
     try {
-        $running = @(Get-Process -Name 'ChatGPT', 'codex' -ErrorAction SilentlyContinue).Count -gt 0
-        if ($running -and -not $script:CodexWasRunning) {
-            Start-PetAnimation -Name 'bicycle'
-        }
-        $script:CodexWasRunning = $running
+        Update-CodexAppIntegration
     }
-    catch { Write-PetLog ('Codex sensor: ' + $_.Exception.Message) }
+    catch { Write-PetLog ('Codex app sensor: ' + $_.Exception.Message) }
 })
 
 $script:CodexControlEnter = $false
@@ -948,6 +1007,75 @@ if (Test-Path -LiteralPath $vsCodeSettingsPath -PathType Leaf) {
 
 $script:LastVSCodeInfo = $null
 $script:LastVSCodeSeen = [DateTime]::MinValue
+$script:LastCodexAppInfo = $null
+$script:LastCodexAppSeen = [DateTime]::MinValue
+$script:CodexAppValidationProcessId = 0
+$script:CodexAppValidationAt = [DateTime]::MinValue
+$script:CodexAppValidationResult = $false
+
+function Test-CodexAppWindow {
+    param(
+        [IntPtr]$Handle,
+        [int]$ProcessId = 0,
+        [switch]$Force
+    )
+
+    if ($Handle -eq [IntPtr]::Zero) { return $false }
+    if (-not $Force -and
+        $ProcessId -gt 0 -and
+        $script:CodexAppValidationProcessId -eq $ProcessId -and
+        ((Get-Date) - $script:CodexAppValidationAt).TotalMilliseconds -lt 650) {
+        return [bool]$script:CodexAppValidationResult
+    }
+
+    $result = $false
+    try {
+        $rootElement = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
+        if ($null -ne $rootElement) {
+            $nameCondition = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::NameProperty,
+                'Codex'
+            )
+            $namedElements = $rootElement.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                $nameCondition
+            )
+            foreach ($element in $namedElements) {
+                try {
+                    if ([string]$element.Current.AutomationId -eq 'RootWebArea' -and
+                        [string]$element.Current.ControlType.ProgrammaticName -match 'Document') {
+                        $result = $true
+                        break
+                    }
+                }
+                catch { }
+            }
+        }
+    }
+    catch { }
+    $script:CodexAppValidationProcessId = $ProcessId
+    $script:CodexAppValidationAt = Get-Date
+    $script:CodexAppValidationResult = $result
+    return $result
+}
+
+function Get-RunningCodexAppWindow {
+    try {
+        foreach ($candidate in @(Get-Process -Name 'ChatGPT' -ErrorAction Stop | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Sort-Object StartTime -Descending)) {
+            $handle = [IntPtr]$candidate.MainWindowHandle
+            if (-not (Test-CodexAppWindow -Handle $handle -ProcessId ([int]$candidate.Id))) { continue }
+            return [pscustomobject]@{
+                Handle = $handle
+                ProcessId = [int]$candidate.Id
+                ProcessName = 'ChatGPT'
+                Title = [string]$candidate.MainWindowTitle
+                Surface = 'CodexApp'
+            }
+        }
+    }
+    catch { }
+    return $null
+}
 
 function Update-VSCodeFocusMemory {
     try {
@@ -955,6 +1083,10 @@ function Update-VSCodeFocusMemory {
         if ($null -ne $info -and $info.ProcessName -ieq 'Code') {
             $script:LastVSCodeInfo = $info
             $script:LastVSCodeSeen = Get-Date
+        }
+        elseif ($null -ne $info -and $info.ProcessName -ieq 'ChatGPT' -and (Test-CodexAppWindow -Handle $info.Handle -ProcessId $info.ProcessId)) {
+            $script:LastCodexAppInfo = $info
+            $script:LastCodexAppSeen = Get-Date
         }
     }
     catch { }
@@ -995,6 +1127,45 @@ function Restore-VSCodeWindow {
         $script:LastVSCodeInfo = $foreground
         $script:LastVSCodeSeen = Get-Date
         return $foreground
+    }
+    return $null
+}
+
+function Restore-CodexAppWindow {
+    $foreground = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
+    if ($null -ne $foreground -and $foreground.ProcessName -ieq 'ChatGPT' -and (Test-CodexAppWindow -Handle $foreground.Handle -ProcessId $foreground.ProcessId)) {
+        return $foreground
+    }
+
+    $target = Get-RunningCodexAppWindow
+    if ($null -eq $target) { return $null }
+
+    [CR7PetNative.VSCodeBridge]::RestoreWindow($target.Handle) | Out-Null
+    Start-Sleep -Milliseconds 130
+    $foreground = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
+    if ($null -ne $foreground -and $foreground.ProcessName -ieq 'ChatGPT' -and (Test-CodexAppWindow -Handle $foreground.Handle -ProcessId $foreground.ProcessId)) {
+        $script:LastCodexAppInfo = $foreground
+        $script:LastCodexAppSeen = Get-Date
+        return $foreground
+    }
+    return $null
+}
+
+function Restore-PreferredDevelopmentSurface {
+    $vsCode = Get-RunningVSCodeWindow
+    $codexApp = Get-RunningCodexAppWindow
+
+    if ($null -ne $codexApp -and ($null -eq $vsCode -or $script:LastCodexAppSeen -gt $script:LastVSCodeSeen)) {
+        $restored = Restore-CodexAppWindow
+        if ($null -ne $restored) { return [pscustomobject]@{ Surface = 'CodexApp'; Info = $restored } }
+    }
+    if ($null -ne $vsCode) {
+        $restored = Restore-VSCodeWindow
+        if ($null -ne $restored) { return [pscustomobject]@{ Surface = 'VSCode'; Info = $restored } }
+    }
+    if ($null -ne $codexApp) {
+        $restored = Restore-CodexAppWindow
+        if ($null -ne $restored) { return [pscustomobject]@{ Surface = 'CodexApp'; Info = $restored } }
     }
     return $null
 }
@@ -1050,9 +1221,73 @@ function Get-FocusedAutomationContext {
     }
 }
 
-$script:ConfirmationSemanticPattern = '(?i)permission\s*request|permissionRequest|approval\s*required|allow once|allow always|yes,?\s+allow|approve|confirmation|confirm action|press enter to confirm|do you want to proceed|request to run|run command|accept proposed|reject proposed'
+$script:ConfirmationSemanticPattern = '(?i)permission\s*request|permissionRequest|approval\s*required|allow once|allow always|yes,?\s+allow|approve|confirmation|confirm action|press enter to confirm|do you want to proceed|request to run|run command|accept proposed|reject proposed|\u9700\u8981\u786e\u8ba4|\u6279\u51c6|\u5141\u8bb8\u4e00\u6b21|\u59cb\u7ec8\u5141\u8bb8|\u672c\u6b21\u4f1a\u8bdd\u4e2d\u5141\u8bb8|\u786e\u8ba4\u5e76\u7ee7\u7eed|\u8fd0\u884c\u547d\u4ee4|\u62d2\u7edd'
+$script:CodexConfirmationButtonPattern = '(?i)^\s*(approve|approve once|approve this command|allow|allow once|allow this command|allow for this session|always allow|confirm|confirm and continue|run|run command|continue|deny|reject|\u6279\u51c6|\u5141\u8bb8|\u5141\u8bb8\u4e00\u6b21|\u672c\u6b21\u4f1a\u8bdd\u4e2d\u5141\u8bb8|\u59cb\u7ec8\u5141\u8bb8|\u786e\u8ba4|\u786e\u8ba4\u5e76\u7ee7\u7eed|\u8fd0\u884c|\u8fd0\u884c\u547d\u4ee4|\u7ee7\u7eed|\u62d2\u7edd)\s*$'
 $script:LastBackgroundConfirmationScan = [DateTime]::MinValue
 $script:BackgroundConfirmationScanMs = 1400
+
+function Get-CodexAppSnapshot {
+    $target = Get-RunningCodexAppWindow
+    if ($null -eq $target) {
+        return [pscustomobject]@{ Observed = $false; Inspectable = $false; Running = $false; Confirmation = $false; Composer = $false; Detail = 'CodexAppClosed' }
+    }
+    if ([CR7PetNative.VSCodeBridge]::IsWindowMinimized($target.Handle)) {
+        return [pscustomobject]@{ Observed = $true; Inspectable = $false; Running = $false; Confirmation = $false; Composer = $false; Detail = 'CodexAppMinimized' }
+    }
+
+    try {
+        $rootElement = [System.Windows.Automation.AutomationElement]::FromHandle($target.Handle)
+        if ($null -eq $rootElement) {
+            return [pscustomobject]@{ Observed = $true; Inspectable = $false; Running = $false; Confirmation = $false; Composer = $false; Detail = 'NoAutomationRoot' }
+        }
+
+        $running = $false
+        $confirmation = $false
+        $composer = $false
+        $detail = ''
+        $buttonCondition = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button
+        )
+        $buttons = $rootElement.FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            $buttonCondition
+        )
+        foreach ($element in $buttons) {
+            try {
+                if ($element.Current.IsOffscreen) { continue }
+                $name = [string]$element.Current.Name
+                if ($element.Current.IsEnabled -and $name -match '(?i)^\s*(Stop|\u505c\u6b62)\s*$') {
+                    $running = $true
+                }
+                elseif ($element.Current.IsEnabled -and $name -match $script:CodexConfirmationButtonPattern) {
+                    $confirmation = $true
+                    if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $name }
+                }
+            }
+            catch { }
+        }
+        $composerCondition = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ClassNameProperty,
+            'ProseMirror'
+        )
+        $composer = $null -ne $rootElement.FindFirst(
+            [System.Windows.Automation.TreeScope]::Descendants,
+            $composerCondition
+        )
+        return [pscustomobject]@{
+            Observed = $true
+            Inspectable = $true
+            Running = [bool]$running
+            Confirmation = [bool]$confirmation
+            Composer = [bool]$composer
+            Detail = $detail
+        }
+    }
+    catch {
+        return [pscustomobject]@{ Observed = $true; Inspectable = $false; Running = $false; Confirmation = $false; Composer = $false; Detail = $_.Exception.Message }
+    }
+}
 
 function Get-BackgroundClaudeConfirmationSnapshot {
     $target = Get-RunningVSCodeWindow
@@ -1196,6 +1431,44 @@ function Get-AISubmitContext {
     }
 }
 
+function Get-CodexAppSubmitContext {
+    param([switch]$AllowRecentRestore)
+
+    $info = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
+    $isCodexForeground = $null -ne $info -and $info.ProcessName -ieq 'ChatGPT' -and (Test-CodexAppWindow -Handle $info.Handle -ProcessId $info.ProcessId -Force)
+    if (-not $isCodexForeground -and $AllowRecentRestore) {
+        $info = Restore-CodexAppWindow
+        $isCodexForeground = $null -ne $info
+    }
+    if (-not $isCodexForeground) {
+        return [pscustomobject]@{ Ready = $false; Status = 'NotCodexApp'; Provider = 'Codex App'; ControlEnter = $false; Detail = '' }
+    }
+
+    $snapshot = Get-CodexAppSnapshot
+    if ($snapshot.Confirmation) {
+        return [pscustomobject]@{ Ready = $false; Status = 'ConfirmationBlocked'; Provider = 'Codex App'; ControlEnter = $false; Detail = $snapshot.Detail }
+    }
+    if ($snapshot.Running) {
+        return [pscustomobject]@{ Ready = $false; Status = 'CodexBusy'; Provider = 'Codex App'; ControlEnter = $false; Detail = 'Stop button visible' }
+    }
+
+    $automation = Get-FocusedAutomationContext
+    $automationSemantic = @(
+        $automation.Names
+        $automation.AutomationIds
+        $automation.ClassNames
+    ) -join ' | '
+    $verifiedComposer = $automation.ProcessName -ieq 'ChatGPT' -and
+        $automation.ControlType -match 'Edit' -and
+        $automationSemantic -match '(?i)ProseMirror' -and
+        $automationSemantic -match '(?i)Codex|\u968f\u5fc3\u8f93\u5165|message|prompt|composer'
+    if (-not $verifiedComposer) {
+        return [pscustomobject]@{ Ready = $false; Status = 'NoAIFocus'; Provider = 'Codex App'; ControlEnter = $false; Detail = $automation.ControlType }
+    }
+
+    return [pscustomobject]@{ Ready = $true; Status = 'Ready'; Provider = 'Codex App'; ControlEnter = $false; Detail = $automation.ControlType }
+}
+
 $script:ClaudeConfirmationActive = $false
 $script:ClaudeConfirmationMissingPolls = 0
 $script:ClaudeConfirmationLastPulse = [DateTime]::MinValue
@@ -1288,6 +1561,107 @@ $confirmationTimer.Add_Tick({
     }
 })
 
+$script:CodexConfirmationActive = $false
+$script:CodexConfirmationMissingPolls = 0
+$script:CodexConfirmationLastPulse = [DateTime]::MinValue
+$script:CodexConfirmationMessage = 'CODEX NEEDS CONFIRMATION'
+$script:CodexTaskStateInitialized = $false
+$script:CodexTaskWasRunning = $false
+
+function Show-CodexConfirmationCard {
+    Show-PetMessage `
+        -Text $script:CodexConfirmationMessage `
+        -Tone 'Codex' `
+        -Subtitle 'Review the request in the Codex app' `
+        -Persistent
+}
+
+function Enter-CodexConfirmationState {
+    param([switch]$ForcePulse)
+
+    $wasActive = $script:CodexConfirmationActive
+    $script:CodexConfirmationActive = $true
+    $script:CodexConfirmationMissingPolls = 0
+    $pulseDue = ((Get-Date) - $script:CodexConfirmationLastPulse).TotalMilliseconds -ge 2800
+    if ($ForcePulse -or -not $wasActive -or $pulseDue) {
+        Start-PetAnimation -Name 'calma' -Force
+        Show-CodexConfirmationCard
+        $script:CodexConfirmationLastPulse = Get-Date
+    }
+    elseif (-not $script:BubblePersistent -or $bubbleText.Text -ne $script:CodexConfirmationMessage) {
+        Show-CodexConfirmationCard
+    }
+
+    if (-not $wasActive) {
+        Write-PetLog 'Codex app confirmation detected: persistent Calma state entered.'
+    }
+}
+
+function Exit-CodexConfirmationState {
+    if (-not $script:CodexConfirmationActive) { return }
+    $script:CodexConfirmationActive = $false
+    $script:CodexConfirmationMissingPolls = 0
+    $script:BubblePersistent = $false
+    Start-PetAnimation -Name 'siu' -Force
+    Show-PetMessage `
+        -Text 'CODEX CONFIRMED  /  SIUUU!' `
+        -Milliseconds 1900 `
+        -Tone 'Success' `
+        -Subtitle 'Codex is continuing'
+    Write-PetLog 'Codex app confirmation resolved: persistent Calma exited with SIU.'
+}
+
+function Update-CodexAppIntegration {
+    $snapshot = Get-CodexAppSnapshot
+    $appOpen = [bool]$snapshot.Observed
+
+    if ([bool]$config.triggerOnCodexOpen -and $appOpen -and -not $script:CodexWasRunning) {
+        Start-PetAnimation -Name 'bicycle' -Force
+        Write-PetLog 'Codex app opened: bicycle-kick animation played.'
+    }
+    $script:CodexWasRunning = $appOpen
+
+    if ($appOpen -and -not $snapshot.Inspectable) { return }
+
+    if (-not $appOpen) {
+        $script:CodexTaskStateInitialized = $false
+        $script:CodexTaskWasRunning = $false
+        if ($script:CodexConfirmationActive) {
+            $script:CodexConfirmationActive = $false
+            $script:CodexConfirmationMissingPolls = 0
+            if (-not $script:ClaudeConfirmationActive) { Hide-PetMessage }
+        }
+        return
+    }
+
+    if ($snapshot.Confirmation) {
+        Enter-CodexConfirmationState
+    }
+    elseif ($script:CodexConfirmationActive) {
+        $script:CodexConfirmationMissingPolls++
+        if ($script:CodexConfirmationMissingPolls -ge 2) {
+            Exit-CodexConfirmationState
+        }
+    }
+
+    if (-not $script:CodexTaskStateInitialized) {
+        $script:CodexTaskStateInitialized = $true
+        $script:CodexTaskWasRunning = [bool]$snapshot.Running
+        return
+    }
+
+    if ($script:CodexTaskWasRunning -and -not $snapshot.Running -and -not $script:CodexConfirmationActive -and -not $script:ClaudeConfirmationActive) {
+        Start-PetAnimation -Name 'siu' -Force
+        Show-PetMessage `
+            -Text 'CODEX TASK COMPLETE  /  SIUUU!' `
+            -Milliseconds 2100 `
+            -Tone 'Success' `
+            -Subtitle 'The Codex task has finished'
+        Write-PetLog 'Codex app task completed: SIU animation played.'
+    }
+    $script:CodexTaskWasRunning = [bool]$snapshot.Running
+}
+
 function Submit-FocusedAIPrompt {
     param(
         [ValidateSet('Auto', 'Claude', 'Codex')]
@@ -1342,12 +1716,64 @@ function Submit-FocusedAIPrompt {
     return 'Sent'
 }
 
+function Submit-FocusedCodexAppPrompt {
+    param([switch]$ShowInactiveMessage)
+
+    $context = Get-CodexAppSubmitContext -AllowRecentRestore
+    if (-not $context.Ready) {
+        switch ($context.Status) {
+            'NotCodexApp' {
+                if ($ShowInactiveMessage) {
+                    Show-PetMessage -Text 'CODEX APP NOT ACTIVE' -Milliseconds 1550 -Tone 'Warning' -Subtitle 'Open or focus the Codex desktop app'
+                }
+            }
+            'CodexBusy' {
+                Show-PetMessage -Text 'CODEX IS WORKING' -Milliseconds 1500 -Tone 'Codex' -Subtitle 'Wait for the current task to finish'
+            }
+            'ConfirmationBlocked' {
+                Enter-CodexConfirmationState -ForcePulse
+                Write-PetLog ('Codex app submit blocked by confirmation control: ' + $context.Detail)
+            }
+            default {
+                Show-PetMessage -Text 'FOCUS CODEX COMPOSER' -Milliseconds 1650 -Tone 'Warning' -Subtitle 'Click inside the Codex message box'
+                Write-PetLog ('Codex app submit blocked: no verified composer focus ' + $context.Detail)
+            }
+        }
+        return $context.Status
+    }
+
+    $foregroundCheck = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
+    if ($null -eq $foregroundCheck -or $foregroundCheck.ProcessName -ine 'ChatGPT' -or -not (Test-CodexAppWindow -Handle $foregroundCheck.Handle -ProcessId $foregroundCheck.ProcessId -Force)) {
+        Show-PetMessage -Text 'FOCUS CHANGED' -Milliseconds 1450 -Tone 'Error'
+        Write-PetLog 'Codex app submit cancelled: foreground changed before key dispatch.'
+        return 'FocusChanged'
+    }
+
+    if (-not [CR7PetNative.VSCodeBridge]::SendSubmitKey($false)) {
+        Show-PetMessage -Text 'SUBMIT FAILED' -Milliseconds 1500 -Tone 'Error'
+        Write-PetLog 'Codex app submit failed: SendInput returned false.'
+        return 'Failed'
+    }
+
+    Start-PetAnimation -Name 'siu' -Force
+    Show-PetMessage -Text 'SENT  /  CODEX APP' -Milliseconds 1650 -Tone 'Codex'
+    Write-PetLog 'Codex desktop app prompt submitted with Enter.'
+    return 'Sent'
+}
+
 function Open-VSCodeAndCelebrate {
     Start-PetAnimation -Name 'shirt' -Force
     $existingVSCode = @(Get-Process -Name 'Code' -ErrorAction SilentlyContinue).Count -gt 0
     if ($existingVSCode) {
-        Show-PetMessage -Text 'VS CODE IS OPEN' -Milliseconds 1500
-        Write-PetLog 'Double-click: VS Code was already running; no new launch.'
+        $restored = Restore-VSCodeWindow
+        if ($null -ne $restored) {
+            Show-PetMessage -Text 'VS CODE RESTORED' -Milliseconds 1450 -Tone 'Info' -Subtitle 'Existing window brought to the front'
+            Write-PetLog 'Double-click: restored the existing VS Code window; no new launch.'
+        }
+        else {
+            Show-PetMessage -Text 'VS CODE COULD NOT FOCUS' -Milliseconds 1650 -Tone 'Warning' -Subtitle 'Use the taskbar once, then try again'
+            Write-PetLog 'Double-click: VS Code was running, but foreground restoration failed.'
+        }
         return
     }
     $candidates = @(
@@ -1371,11 +1797,46 @@ function Open-VSCodeAndCelebrate {
     }
 }
 
+function Submit-FocusedDevelopmentPrompt {
+    param([switch]$ShowInactiveMessage)
+
+    $foreground = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
+    if ($null -ne $foreground -and $foreground.ProcessName -ieq 'ChatGPT' -and (Test-CodexAppWindow -Handle $foreground.Handle -ProcessId $foreground.ProcessId)) {
+        return Submit-FocusedCodexAppPrompt -ShowInactiveMessage:$ShowInactiveMessage
+    }
+    if ($null -ne $foreground -and $foreground.ProcessName -ieq 'Code') {
+        return Submit-FocusedAIPrompt -PreferredProvider 'Auto' -ShowInactiveMessage:$ShowInactiveMessage
+    }
+
+    $restored = Restore-PreferredDevelopmentSurface
+    if ($null -ne $restored -and $restored.Surface -eq 'CodexApp') {
+        return Submit-FocusedCodexAppPrompt -ShowInactiveMessage:$ShowInactiveMessage
+    }
+    if ($null -ne $restored -and $restored.Surface -eq 'VSCode') {
+        return Submit-FocusedAIPrompt -PreferredProvider 'Auto' -ShowInactiveMessage:$ShowInactiveMessage
+    }
+    if ($ShowInactiveMessage) {
+        Show-PetMessage -Text 'NO DEVELOPMENT APP' -Milliseconds 1600 -Tone 'Warning' -Subtitle 'Open VS Code or the Codex app'
+    }
+    return 'NoDevelopmentApp'
+}
+
+function Focus-CodexApp {
+    $restored = Restore-CodexAppWindow
+    if ($null -ne $restored) {
+        Show-PetMessage -Text 'CODEX APP RESTORED' -Milliseconds 1400 -Tone 'Codex' -Subtitle 'Ready for your next task'
+        Write-PetLog 'Menu: restored the Codex desktop app.'
+        return
+    }
+    Show-PetMessage -Text 'CODEX APP IS NOT RUNNING' -Milliseconds 1650 -Tone 'Warning'
+    Write-PetLog 'Menu: Codex desktop app was not running.'
+}
+
 $menu = New-Object System.Windows.Controls.ContextMenu
 $submitItem = New-Object System.Windows.Controls.MenuItem
 $submitItem.Header = 'Submit Focused AI Prompt'
 $submitItem.FontWeight = [System.Windows.FontWeights]::SemiBold
-$submitItem.Add_Click({ Submit-FocusedAIPrompt -PreferredProvider 'Auto' -ShowInactiveMessage | Out-Null })
+$submitItem.Add_Click({ Submit-FocusedDevelopmentPrompt -ShowInactiveMessage | Out-Null })
 $menu.Items.Add($submitItem) | Out-Null
 
 $submitClaudeItem = New-Object System.Windows.Controls.MenuItem
@@ -1384,12 +1845,18 @@ $submitClaudeItem.Add_Click({ Submit-FocusedAIPrompt -PreferredProvider 'Claude'
 $menu.Items.Add($submitClaudeItem) | Out-Null
 
 $submitCodexItem = New-Object System.Windows.Controls.MenuItem
-$submitCodexItem.Header = 'Submit to Focused Codex'
+$submitCodexItem.Header = 'Submit to Focused VS Code Codex'
 $submitCodexItem.Add_Click({ Submit-FocusedAIPrompt -PreferredProvider 'Codex' -ShowInactiveMessage | Out-Null })
 $menu.Items.Add($submitCodexItem) | Out-Null
+
+$submitCodexAppItem = New-Object System.Windows.Controls.MenuItem
+$submitCodexAppItem.Header = 'Submit to Focused Codex App'
+$submitCodexAppItem.Add_Click({ Submit-FocusedCodexAppPrompt -ShowInactiveMessage | Out-Null })
+$menu.Items.Add($submitCodexAppItem) | Out-Null
 $menu.Items.Add((New-Object System.Windows.Controls.Separator)) | Out-Null
 
 $menuSpecs = @(
+    @{ Header = 'Focus Codex App'; Action = { Focus-CodexApp } },
     @{ Header = 'Open VS Code + Shirt-Rip'; Action = { Open-VSCodeAndCelebrate } },
     @{ Header = 'Bicycle Kick'; Action = { Start-PetAnimation -Name 'bicycle' -Force } },
     @{ Header = 'Point > Ground > SIU'; Action = { Start-PetAnimation -Name 'siu' -Force } },
@@ -1426,36 +1893,45 @@ $menu.Items.Add($exitItem) | Out-Null
 $root.ContextMenu = $menu
 
 $singleClickTimer = New-Object System.Windows.Threading.DispatcherTimer
-$singleClickTimer.Interval = [TimeSpan]::FromMilliseconds(280)
+$singleClickDelay = [math]::Max(280, ([CR7PetNative.VSCodeBridge]::GetDoubleClickMilliseconds() + 30))
+$singleClickTimer.Interval = [TimeSpan]::FromMilliseconds($singleClickDelay)
 $singleClickTimer.Add_Tick({
     $singleClickTimer.Stop()
     $foreground = [CR7PetNative.VSCodeBridge]::GetForegroundInfo()
+    if ($null -ne $foreground -and $foreground.ProcessName -ieq 'ChatGPT' -and (Test-CodexAppWindow -Handle $foreground.Handle -ProcessId $foreground.ProcessId)) {
+        Submit-FocusedCodexAppPrompt | Out-Null
+        return
+    }
     if ($null -ne $foreground -and $foreground.ProcessName -ieq 'Code') {
         Submit-FocusedAIPrompt -PreferredProvider 'Auto' | Out-Null
         return
     }
 
-    $restored = Restore-VSCodeWindow
+    $restored = Restore-PreferredDevelopmentSurface
     if ($null -ne $restored) {
-        if ($script:ClaudeConfirmationActive) {
+        if ($restored.Surface -eq 'CodexApp' -and $script:CodexConfirmationActive) {
+            Enter-CodexConfirmationState -ForcePulse
+        }
+        elseif ($restored.Surface -eq 'VSCode' -and $script:ClaudeConfirmationActive) {
             Enter-ClaudeConfirmationState -ForcePulse
         }
         else {
-            Show-PetMessage `
-                -Text 'VS CODE RESTORED' `
-                -Milliseconds 1350 `
-                -Tone 'Info' `
-                -Subtitle 'Ready for Claude or Codex'
+            if ($restored.Surface -eq 'CodexApp') {
+                Show-PetMessage -Text 'CODEX APP RESTORED' -Milliseconds 1350 -Tone 'Codex' -Subtitle 'Ready for your next task'
+            }
+            else {
+                Show-PetMessage -Text 'VS CODE RESTORED' -Milliseconds 1350 -Tone 'Info' -Subtitle 'Ready for Claude or Codex'
+            }
         }
-        Write-PetLog 'Single-click: restored the existing VS Code window.'
+        Write-PetLog ('Single-click: restored development surface ' + $restored.Surface + '.')
     }
     else {
         Show-PetMessage `
-            -Text 'VS CODE IS NOT RUNNING' `
+            -Text 'NO DEVELOPMENT APP' `
             -Milliseconds 1550 `
             -Tone 'Warning' `
-            -Subtitle 'Double-click the pet to open it'
-        Write-PetLog 'Single-click: VS Code was not running.'
+            -Subtitle 'Open VS Code or the Codex app'
+        Write-PetLog 'Single-click: neither VS Code nor the Codex app was running.'
     }
 })
 
@@ -1527,7 +2003,18 @@ $window.Add_ContentRendered({
         catch { Write-PetLog ('Initial audio: ' + $_.Exception.Message) }
         $initialBrightness = [CR7PetNative.Sensors]::ReadBrightness()
         if ($initialBrightness -ge 0) { $script:LastBrightness = $initialBrightness }
-        $script:CodexWasRunning = @(Get-Process -Name 'ChatGPT', 'codex' -ErrorAction SilentlyContinue).Count -gt 0
+        $initialCodexSnapshot = Get-CodexAppSnapshot
+        $script:CodexWasRunning = [bool]$initialCodexSnapshot.Observed
+        $script:CodexTaskStateInitialized = [bool]$initialCodexSnapshot.Observed
+        $script:CodexTaskWasRunning = [bool]$initialCodexSnapshot.Running
+        if ($initialCodexSnapshot.Confirmation) {
+            Enter-CodexConfirmationState -ForcePulse
+        }
+        Write-PetLog ('Codex app initial state observed={0} inspectable={1} running={2} confirmation={3}' -f
+            $initialCodexSnapshot.Observed,
+            $initialCodexSnapshot.Inspectable,
+            $initialCodexSnapshot.Running,
+            $initialCodexSnapshot.Confirmation)
 
         foreach ($timer in @($animationTimer, $hookTimer, $volumeTimer, $brightnessTimer, $codexTimer, $focusTimer, $confirmationTimer)) {
             $timer.Start()

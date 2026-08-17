@@ -5,11 +5,11 @@
 <h1 align="center">VS Code Pet</h1>
 
 <p align="center">
-  <strong>A Ronaldo-inspired animated control surface for Claude Code and Codex inside VS Code.</strong>
+  <strong>A Ronaldo-inspired animated control surface for Claude Code, VS Code Codex, and the Codex desktop experience.</strong>
 </p>
 
 <p align="center">
-  Five fan-art eras, expressive low-frame animation, system-aware celebrations, and a guarded one-click AI prompt bridge — all running locally on Windows.
+  Five fan-art eras, expressive low-frame animation, system-aware celebrations, and a guarded one-click AI prompt bridge across VS Code and the Windows Codex app — all running locally.
 </p>
 
 <p align="center">
@@ -17,6 +17,7 @@
   <img alt="PowerShell" src="https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?logo=powershell&logoColor=white">
   <img alt="UI engine" src="https://img.shields.io/badge/UI-WPF-6A5ACD">
   <img alt="VS Code" src="https://img.shields.io/badge/VS%20Code-Claude%20%2B%20Codex-23A8F2?logo=visualstudiocode&logoColor=white">
+  <img alt="Codex desktop" src="https://img.shields.io/badge/Codex-desktop%20linked-3CCB9B">
   <img alt="Animations" src="https://img.shields.io/badge/animation%20frames-125-F4B942">
 </p>
 
@@ -40,27 +41,31 @@ Press global **7** or **Numpad 7** to move between all five skins. Every era has
 
 | Interaction | Result |
 | --- | --- |
-| **Single-click the pet with a verified Claude or Codex input focused** | Submit the prompt and play Point → Ground → SIU |
-| **Single-click while another app is active** | Restore the existing VS Code window without submitting anything |
-| **Single-click over a non-AI VS Code control** | Block submission and show **FOCUS CLAUDE OR CODEX** |
-| **Double-click** | Play the shirt-rip celebration and open VS Code only if it is not already running |
+| **Single-click with a verified AI composer focused** | Submit in Claude Code, VS Code Codex, or Codex desktop and play Point → Ground → SIU |
+| **Single-click while another app is active** | Restore the most recently used VS Code or Codex desktop window without submitting anything |
+| **Single-click over an unverified control** | Block submission and show focused guidance; no key is sent |
+| **Double-click** | Play the shirt-rip celebration; restore the existing VS Code window, or launch it only when absent |
 | **Hover while resting** | Play one restrained standing sway, then become still again |
 | **Left-drag** | Reposition the pet anywhere on the desktop |
-| **Right-click** | Open the English action menu, including explicit Claude and Codex submit actions |
+| **Right-click** | Open the English action menu, including separate VS Code and Codex desktop actions |
 | **7 / Numpad 7** | Cycle to the next character era while passing the key through |
 
-The window is always-on-top but deliberately **non-activating**. Clicking the character does not steal keyboard focus from the prompt you are writing in VS Code.
+The window is always-on-top but deliberately **non-activating**. Clicking the character does not steal keyboard focus from the prompt you are writing in VS Code or Codex desktop.
+
+Single-click dispatch waits for the Windows double-click interval before acting. That prevents a slower valid double-click from leaking through as an early single-click, while the foreground bridge attaches to the active window thread long enough to restore an existing VS Code window reliably.
 
 ## Guarded AI prompt bridge
 
-VS Code Pet turns the character into a small, focus-preserving submit control for the installed **Claude Code** and **Codex** VS Code experiences. It uses Windows UI Automation to inspect the control that already owns keyboard focus; it does not guess from screen coordinates.
+VS Code Pet turns the character into a small, focus-preserving submit control for three local surfaces: **Claude Code in VS Code**, **Codex in VS Code**, and the **Codex view in the Windows desktop app**. The current OpenAI desktop app exposes Chat, Work, and Codex in one Windows client, so the pet verifies the active Codex accessibility root instead of trusting the `ChatGPT.exe` process name alone. See OpenAI's [desktop migration note](https://help.openai.com/en/articles/20001276/) for the current app model.
+
+It uses Windows UI Automation to inspect the control that already owns keyboard focus; it never guesses from screen coordinates.
 
 ```mermaid
 flowchart LR
-    A["Click the pet"] --> B{"VS Code active?"}
-    B -- No --> C["Restore existing VS Code window"]
+    A["Click the pet"] --> B{"Development surface active?"}
+    B -- No --> C["Restore most recently used VS Code or Codex app"]
     B -- Yes --> D["Inspect focused UI control"]
-    D --> E{"Claude or Codex input?"}
+    D --> E{"Verified AI composer?"}
     E -- No --> F["Block and show focus guidance"]
     E -- Yes --> G{"Permission or confirmation control?"}
     G -- Yes --> H["Block the submission"]
@@ -70,8 +75,10 @@ flowchart LR
 
 ### What the bridge verifies
 
-- VS Code is the active application, or was the immediately preceding foreground window before the non-activating pet click.
-- The focused accessibility element belongs to a recognized Claude Code or Codex surface.
+- VS Code or the Codex desktop view is active, or was the most recently used development surface before the non-activating pet click.
+- Desktop Codex is verified by its `ChatGPT.exe` host plus a live `RootWebArea` document named `Codex`; the short-lived validation cache is refreshed as modes change, avoiding confusion with ordinary Chat or Work views.
+- The desktop composer must be an editable `ProseMirror` control inside that verified Codex root.
+- VS Code focus must belong to a recognized Claude Code or Codex surface.
 - The focused element is an editable prompt surface, not a button, menu item, checkbox, link, dialog, or window.
 - No permission, approval, command-run, accept/reject, or confirmation language appears in the focused control hierarchy.
 - The appropriate send shortcut is used from the current VS Code user settings.
@@ -82,7 +89,7 @@ The integration currently respects:
 - `claudeCode.useTerminal`
 - `claudeCode.useCtrlEnterToSend`
 
-Successful actions report **SENT / CLAUDE** or **SENT / CODEX** in the status bubble. Unsafe or ambiguous states report a clear English message such as **FOCUS CLAUDE OR CODEX** or **CONFIRMATION BLOCKED**.
+Successful actions report **SENT / CLAUDE**, **SENT / CODEX**, or **SENT / CODEX APP** in the status bubble. Unsafe or ambiguous states report a clear English message such as **FOCUS CLAUDE OR CODEX**, **FOCUS CODEX COMPOSER**, **CODEX IS WORKING**, or **CONFIRMATION BLOCKED**.
 
 > The bridge is intentionally manual. It never submits on a timer, never stores or transmits prompt content, and never turns a permission dialog into an automatic approval.
 
@@ -99,14 +106,27 @@ When a visible Claude Code permission or command confirmation appears, the pet e
 
 The status card uses a compact information hierarchy — provider label, action title, supporting instruction, state icon, accent rail, and shadow — while remaining non-interactive so it never steals the prompt focus.
 
+### Codex desktop states
+
+The desktop integration observes the Codex view itself, including localized UI labels, while keeping approvals fully manual:
+
+- a visible localized **Stop** control marks the task as running, so a pet click cannot accidentally submit into a busy task;
+- a recognized approval, allow, run-command, continue, deny, or reject control enters **CODEX NEEDS CONFIRMATION** with repeating Calma;
+- the pet never presses an approval button and never chooses an approval scope;
+- once the confirmation clears, it plays SIU and reports **CODEX CONFIRMED / SIUUU!**;
+- when a running task becomes idle, it plays SIU once and reports **CODEX TASK COMPLETE / SIUUU!**;
+- startup initializes from the current task state, preventing a false completion celebration when the pet launches mid-task.
+
 ## System-aware celebrations
 
 The pet listens to a small set of local Windows state changes and maps them to recognizable actions.
 
 | Windows or app event | Character action |
 | --- | --- |
-| Pet starts, or Codex/ChatGPT opens while the pet is running | Five-frame bicycle kick |
+| Pet starts, or the verified Codex desktop view opens while the pet is running | Five-frame bicycle kick |
 | Claude Code waits for a permission or command confirmation | Persistent action-required card with repeating Calma; SIU after resolution |
+| Codex desktop waits for confirmation | Persistent **CODEX NEEDS CONFIRMATION** card with repeating Calma; SIU after resolution |
+| A Codex desktop task completes | One SIU with **CODEX TASK COMPLETE / SIUUU!** |
 | Audio becomes muted | Five-frame bicycle kick |
 | Volume decreases without mute | Calma, with palms moving downward |
 | Volume increases | Eyes closed, hands over chest: the meditation celebration |
@@ -124,7 +144,7 @@ This is a low-frame character system by design, not a slideshow of unrelated pic
 - a small hover-only idle sway instead of constant visual noise;
 - a shared floor line and stable character proportions across every skin.
 
-Generated near-white backgrounds and enclosed white pockets — including the gaps around arms, shirts, and the bicycle-kick landing pose — are converted to real alpha and edge-decontaminated by `tools/build_animation_assets.py`.
+Generated near-white backgrounds and enclosed white pockets — including the gaps around arms, shirts, and the bicycle-kick landing pose — are converted to real alpha and edge-decontaminated by `tools/build_animation_assets.py`. Audited single-frame residue is corrected by the source-guarded `tools/fix_frame_halos.py`, which refuses unexpected pixels and is safe to rerun.
 
 ## Start and install
 
@@ -147,7 +167,7 @@ Runtime behavior can be tuned in `config.json` without changing the animation as
 | `animationTickMs` | `30` | WPF animation update interval |
 | `volumePollMs` | `400` | Audio-state polling interval |
 | `brightnessPollMs` | `1200` | Display-brightness polling interval |
-| `codexPollMs` | `1600` | VS Code/Codex process-state polling interval |
+| `codexPollMs` | `800` | Codex desktop task, confirmation, and process-state polling interval |
 | `triggerOnCodexOpen` | `true` | Play the opening bicycle kick when the AI app appears |
 | `alwaysOnTop` | `true` | Keep the companion above regular windows |
 
@@ -157,7 +177,9 @@ The context menu provides direct access to the complete motion and integration s
 
 - Submit Focused AI Prompt
 - Submit to Focused Claude
-- Submit to Focused Codex
+- Submit to Focused VS Code Codex
+- Submit to Focused Codex App
+- Focus Codex App
 - Point > Ground > SIU
 - Bicycle Kick
 - Sleeping Meditation
@@ -169,7 +191,7 @@ The context menu provides direct access to the complete motion and integration s
 - Reset Position
 - Exit VS Code Pet
 
-Provider-specific submit commands still use the same focus and confirmation guards. Choosing a provider does not bypass safety validation.
+Provider-specific submit commands still use the same focus and confirmation guards. Choosing a provider does not bypass safety validation, and focusing an app never submits by itself.
 
 ## Verification and demo
 
@@ -185,7 +207,7 @@ The self-test validates:
 - all five skins and all 125 animation frames;
 - transparent image corners and missing-frame errors;
 - the global 7 skin-switch hook, with Enter and Backspace deliberately unbound;
-- the guarded VS Code submit bridge;
+- the guarded Windows submit bridge used by VS Code and Codex desktop;
 - Core Audio access and WMI brightness support.
 
 For a visual pass through every animation, use:
@@ -210,15 +232,16 @@ VS Code Pet/
 │   └── skins/                  # Five 25-frame character sets
 └── tools/
     ├── build_animation_assets.py
+    ├── fix_frame_halos.py
     └── slice_sprites.py
 ```
 
 ## Local-first privacy and safety
 
 - The runtime makes no external API calls and requires no Claude, Codex, or OpenAI API key.
-- It inspects accessibility labels and control IDs only for focus validation; it does not store or transmit prompt text.
+- It inspects accessibility labels, control IDs, and visible task-state buttons only for validation; it does not store or transmit prompt text.
 - Global 7 changes the skin and passes through; Enter and Backspace are not observed by the pet.
-- AI submission is allowed only after provider, focus, editable-control, and confirmation checks pass.
+- AI submission is allowed only after app identity, provider, focus, editable-control, busy-state, and confirmation checks pass.
 - All animations, accessibility inspection, system-state polling, settings reads, and logs stay on the local machine.
 
 ## Fan-art notice

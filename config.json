@@ -4,7 +4,7 @@
   "animationTickMs": 30,
   "volumePollMs": 400,
   "brightnessPollMs": 1200,
-  "codexPollMs": 1600,
+  "codexPollMs": 800,
   "triggerOnCodexOpen": true,
   "alwaysOnTop": true
 }
